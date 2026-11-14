@@ -12,7 +12,7 @@ for (const sid of stages) {
   const pg = await ctx.newPage();
   pg.on('pageerror', (e) => { errs++; console.log('E:', sid, e.message); });
   pg.on('console', (m) => { if (m.type() === 'error') { errs++; console.log('C:', sid, m.text()); } });
-  await pg.goto('file:///home/claude/organ-trainer/dist/index.html#home&debug');
+  await pg.goto('file:///home/claude/tutti/dist/index.html#home&debug');
   await pg.waitForSelector('.home');
   await pg.evaluate(({ sid, names }) => {
     const t = window.__tutti;
