@@ -1,5 +1,6 @@
 import { h } from '../h.js';
 import { confirmDialog, toast } from '../dialog.js';
+import { renderBackupCard } from '../backupCard.js';
 
 const REASON = {
   unsupported: 'Not supported in this browser.',
@@ -106,6 +107,7 @@ export function renderSettings(ctx, mount) {
       toggle('sound', 'Sound'),
       toggle('metronome', 'Metronome in rhythm drills'),
       toggle('hints', 'Hints', 'A hint appears after a few seconds on notes you have not mastered. Hinted answers count half.')),
+    renderBackupCard(ctx),
     h('section.card.group',
       h('div.setting', h('span.lbl', 'Sync'), syncLine),
       h('div.setting', resetBtn))));

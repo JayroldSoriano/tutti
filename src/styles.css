@@ -892,3 +892,41 @@ p { margin: 0; }
 .reveal-link { max-width: 270px; padding-top: 18px; }
 .reveal-link svg { width: 100%; height: auto; display: block; }
 .p-card { position: relative; }
+
+/* ================================================================== settings: move progress (backup) */
+.xf .xf-title { font-size: 21px; line-height: 1.2; }
+.xf-summary { font-size: 14.5px; color: var(--ink-2); margin-top: -4px; }
+.xf .xf-lbl { font-size: 13.5px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
+.xf-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 560px) { .xf-actions { grid-template-columns: 1fr 1fr; } }
+.xf-btn { min-height: 48px; padding: 0 16px; font-size: 15.5px; justify-content: flex-start; gap: 10px; text-align: left; }
+.xf-btn span { min-width: 0; }
+.xf-ico { width: 20px; height: 20px; flex: 0 0 auto; color: var(--brass-ink); }
+.xf-status { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; color: var(--ink-2); padding: 10px 12px; border-radius: var(--radius-s); background: var(--brass-soft); }
+.xf-status .xf-ico { width: 18px; height: 18px; margin-top: 1px; }
+.xf-help { font-size: 13.5px; color: var(--muted); padding: 0 6px; margin-top: -6px; max-width: 64ch; }
+
+.dialog.xf-dialog { max-height: calc(100dvh - 32px - var(--sa-t) - var(--sa-b)); overflow-y: auto; overscroll-behavior: contain; }
+.xf-body { display: flex; flex-direction: column; gap: 10px; }
+.dialog .xf-body > * + * { margin-top: 0; }
+.xf-code {
+  display: block; width: 100%; min-height: 112px; resize: vertical; padding: 10px 12px; border-radius: var(--radius-s);
+  border: 1px solid var(--rule-2); background: var(--page); color: var(--ink);
+  font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; word-break: break-all; overflow-wrap: anywhere;
+}
+.xf-code:focus-visible { outline: 2.5px solid var(--brass); outline-offset: 1px; border-radius: var(--radius-s); }
+.xf-paste { font-size: 16px; } /* 16px stops iOS zooming on focus */
+.xf-code[aria-invalid="true"] { border-color: var(--bad); }
+.xf-selbtn { align-self: flex-start; min-height: 44px; padding: 0 18px; font-size: 15px; }
+.xf-error { font-size: 14px; color: var(--bad); padding: 9px 12px; border-radius: var(--radius-s); background: var(--bad-soft); }
+.xf-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.xf-col { padding: 12px 12px 10px; border-radius: var(--radius-m); background: var(--surface-2); border: 1px solid var(--rule); min-width: 0; }
+.xf-col:first-child { background: var(--brass-soft); border-color: transparent; }
+.xf-col h3 { font-family: var(--f-ui); font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 6px; letter-spacing: .01em; }
+.xf-col dl { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.xf-row dt { font-size: 12px; color: var(--muted); }
+.xf-row dd { margin: 0; font-family: var(--f-display); font-size: 19px; line-height: 1.15; color: var(--ink); }
+.xf-none { font-size: 14px; color: var(--muted); }
+.xf-saved { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.xf-note { font-size: 14px; color: var(--ink-2); }
+.xf-code[aria-invalid="true"]:focus-visible { outline-color: var(--bad); }

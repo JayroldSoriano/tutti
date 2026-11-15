@@ -5,23 +5,33 @@ let openCount = 0;
 export const dialogOpen = () => openCount > 0;
 
 /**
- * openDialog({ title, body, art, actions: [{ label, value, kind }], dismissable }) -> Promise<value|null>
+ * openDialog({ title, body, art, actions: [{ label, value, kind, run }], dismissable, className }) -> Promise<value|null>
+ * An action with `run` stays open when run() resolves to false; otherwise it closes with run()'s value (or `value`).
  */
-export function openDialog({ title, body, art, actions = [{ label: 'OK', value: true, kind: 'primary' }], dismissable = true, onOpen } = {}) {
+export function openDialog({ title, body, art, actions = [{ label: 'OK', value: true, kind: 'primary' }], dismissable = true, onOpen, className } = {}) {
   return new Promise((resolve) => {
     const prev = document.activeElement;
     const titleId = 'dlg-' + Math.random().toString(36).slice(2, 8);
     const btns = actions.map((a) => h('button.btn.btn-block' + (a.kind ? '.btn-' + a.kind : ''), {
-      type: 'button', onclick: () => close(a.value),
+      type: 'button',
+      onclick: a.run
+        ? async (e) => {
+          const b = e.currentTarget; if (b.getAttribute('aria-busy') === 'true') return;
+          b.setAttribute('aria-busy', 'true');
+          let r; try { r = await a.run(); } catch (err) { console.warn(err); r = false; }
+          b.removeAttribute('aria-busy');
+          if (r !== false) close(r === undefined || r === true ? a.value : r);
+        }
+        : () => close(a.value),
     }, a.label));
-    const dlg = h('div.dialog', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId },
+    const dlg = h('div.dialog', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId, class: className || null },
       art ? h('div.d-art', art) : null,
       h('h2', { id: titleId }, title),
       body ? h('div.d-body', typeof body === 'string' ? h('p', body) : body) : null,
       h('div.d-actions', btns));
     const scrim = h('div.scrim', dlg);
     scrim.addEventListener('pointerdown', (e) => { if (e.target === scrim && dismissable) close(null); });
-    const focusables = () => [...dlg.querySelectorAll('button, [href], input, select, [tabindex]:not([tabindex="-1"])')].filter((x) => !x.disabled);
+    const focusables = () => [...dlg.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((x) => !x.disabled);
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (dismissable) close(null); return; }
       if (e.key === 'Tab') {
