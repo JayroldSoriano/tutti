@@ -2,6 +2,9 @@ import { h, s, pct } from '../h.js';
 import { renderStaff } from '../staff.js';
 import * as cur from '../../curriculum.js';
 import { openDialog } from '../dialog.js';
+import { LESSONS } from '../../lessons.js';
+
+const LESSON_COUNT = LESSONS.length;
 
 export function renderProgress(ctx, mount) {
   let pr = null;
@@ -9,6 +12,11 @@ export function renderProgress(ctx, mount) {
   if (!pr) { mount.append(h('p.empty', 'Progress is not available right now.')); return; }
 
   const head = h('header.page-head', h('h1', 'Progress'), h('p', pr.totalAnswers ? 'Every note you read moves you along this path.' : 'Your first session will start filling this in.'));
+  let doneN = 0;
+  try { doneN = Object.keys(ctx.engine.getLessons().done || {}).filter((id) => /^L\d\d$/.test(id)).length; } catch { /* ignore */ }
+  const lessonsLine = h('a.card.lessons-line', { href: '#lessons' },
+    h('span', h('b.num', `${doneN} of ${LESSON_COUNT}`), ' lessons completed'),
+    h('span.lessons-line-go', 'See the lesson path'));
 
   // ---- stage map
   const byId = Object.fromEntries(pr.stages.map((x) => [x.id, x]));
@@ -51,7 +59,7 @@ export function renderProgress(ctx, mount) {
     stat(totalMin, 'minutes'),
     stat(pr.streakDays || 0, 'day streak'));
 
-  mount.append(h('div.progress', head,
+  mount.append(h('div.progress', head, lessonsLine,
     h('section.card', h('h2.section-title', 'Stages'), path),
     h('section.paper.card', h('h2.section-title', 'Note mastery'), h('div.heat-wrap', heatSvg), legend),
     h('section.card', h('h2.section-title', 'Reading speed'), h('p.muted.small', 'Median time per prompt, by session'), spark),

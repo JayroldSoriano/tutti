@@ -31,20 +31,20 @@ function staffY0(clef, staff) {
   if (clef === 'grand') return staff === 'bass' ? GRAND_BASS_Y0 : 0;
   return 0;
 }
-const yOf = (y0, step) => y0 + 40 - 5 * step;
+export const yOf = (y0, step) => y0 + 40 - 5 * step;
 
-function headPath(cx, cy, dur) {
+export function headPath(cx, cy, dur) {
   if (dur === 'w') return ellipse(cx, cy, 7.4, 4.8, 0) + ellipse(cx, cy, 3.9, 2.6, -58);
   if (dur === 'h') return ellipse(cx, cy, HEAD_RX, HEAD_RY, HEAD_ROT) + ellipse(cx, cy, 4.9, 2.05, -34);
   return ellipse(cx, cy, HEAD_RX, HEAD_RY, HEAD_ROT);
 }
-const headHalfW = (dur) => (dur === 'w' ? 7.4 : 6.2);
+export const headHalfW = (dur) => (dur === 'w' ? 7.4 : 6.2);
 
-function staffLines(g, y0, x1, x2) {
+export function staffLines(g, y0, x1, x2) {
   for (let i = 0; i < 5; i++) g.appendChild(s('line', { class: 'st-line', x1, x2, y1: y0 + i * SP, y2: y0 + i * SP }));
 }
 
-function drawKeySig(g, keySig, staff, y0, x) {
+export function drawKeySig(g, keySig, staff, y0, x) {
   const n = Math.min(7, Math.abs(keySig || 0));
   if (!n) return x;
   const sharp = keySig > 0;
@@ -77,7 +77,7 @@ function columnsOf(body) {
   return cols;
 }
 
-function layoutCluster(notes, dur, stemDirForced) {
+export function layoutCluster(notes, dur, stemDirForced) {
   // notes: [{ step, ... }] on one staff, one column
   const sorted = notes.slice().sort((a, b) => a.step - b.step);
   const lo = sorted[0].step, hi = sorted[sorted.length - 1].step;

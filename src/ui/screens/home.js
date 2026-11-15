@@ -3,7 +3,10 @@ import { renderStaff } from '../staff.js';
 import * as cur from '../../curriculum.js';
 import { pretty } from '../music.js';
 import { openDialog } from '../dialog.js';
-import { placementCard } from './placement.js';
+import { LESSONS, getLesson } from '../../lessons.js';
+import { nextUp, placeOut } from '../../lessonProgress.js';
+import { localDay } from './lesson.js';
+import { itemsText } from '../lesson/steps/recap.js';
 
 export function stageBody(stage) {
   if (!stage) return null;
@@ -45,61 +48,132 @@ function knob(todayMs, goalMs) {
 export function renderHome(ctx, mount) {
   const engine = ctx.engine;
   const now = ctx.now();
+  const today = localDay(now);
   let prog;
   try { prog = engine.progress({ now }); } catch (e) { console.warn(e); prog = null; }
-  const state = engine.getState();
+  let state = engine.getState();
   const settings = ctx.settings();
   const stages = cur.STAGES;
   const stage = stages[(prog && prog.stageIdx) || 0] || stages[0];
   const sp = prog && prog.stages ? prog.stages.find((x) => x.id === (stage && stage.id)) : null;
-  const firstLaunch = !state.placementDone && !(state.totalAnswers > 0);
-  const sessionMin = settings.sessionMin || 10;
   const streak = (prog && prog.streakDays) || 0;
 
-  const start = (mode, stageId) => {
-    ctx.pendingStart = { mode, stageId };
+  // v1 learners: place them on the lesson path once, from the stages they already passed
+  if (!state.lessons && (state.placementDone || state.totalAnswers > 0)) {
+    try {
+      const passed = (prog ? prog.stages : []).filter((x) => x.status === 'passed').map((x) => x.id);
+      engine.setLessons(placeOut(engine.getLessons(), LESSONS, passed, { now }), { now });
+      ctx.save();
+      state = engine.getState();
+    } catch (e) { console.warn(e); }
+  }
+  const ls = engine.getLessons();
+  let itemStats = {};
+  try { itemStats = engine.itemStats({ now }); } catch { /* ignore */ }
+  const nu = nextUp(ls, LESSONS, { now, today, itemStats });
+  const firstLaunch = !state.placementDone && !(state.totalAnswers > 0) && !Object.keys(ls.done).length && !ls.cur;
+  const lessonsToday = (prog && prog.today && prog.today.lessons) || 0;
+
+  const start = (mode, stageId, extra) => {
+    ctx.pendingStart = { mode, stageId, ...(extra || {}) };
     ctx.nav('practice');
   };
+  const goLesson = (anyway) => { if (anyway) ctx.pendingLesson = { anyway: true }; ctx.nav('lesson'); };
 
   const head = h('header.home-head',
     h('div.greet',
       h('p.wordmark', 'Tutti'),
       h('h1', greeting()),
-      h('p', streak > 0 ? `${streak}-day streak. Keep it going.` : firstLaunch ? 'Short, focused sessions. Ten minutes a day is plenty.' : 'Ready when you are.')),
-    knob(prog ? prog.today.ms : 0, prog ? prog.today.goalMs : settings.dailyGoalMin * 60000));
+      h('p', streak > 0 ? `${streak}-day streak. Keep it going.` : firstLaunch ? 'Short daily lessons that teach you to read and play by sight.' : 'Ready when you are.')),
+    h('div.home-knob', knob(prog ? prog.today.ms : 0, prog ? prog.today.goalMs : settings.dailyGoalMin * 60000),
+      lessonsToday ? h('p.knob-tick', h('span', { 'aria-hidden': 'true' }, '✓'), 'Lesson done today') : null));
 
   const parts = [head];
+  parts.push(firstLaunch ? firstCard(ctx, engine) : lessonCard(ctx, ls, nu, goLesson, start));
 
-  if (firstLaunch) {
-    parts.push(placementCard(ctx, { onPlace: () => start('placement'), onZero: () => { try { engine.skipPlacement && engine.skipPlacement(); } catch { /* ignore */ } ctx.save({ flush: true }); ctx.render(); } }));
-  } else if (stage) {
-    const body = stageBody(stage);
-    const mini = body ? renderStaff(body, { box: { w: 560, h: 150 }, maxSpace: 11, label: `Notes in ${stage.title}` }) : null;
-    const progress = sp ? sp.progress : 0;
+  if (!firstLaunch && stage) {
     const canTest = !!(sp && sp.canTestOut);
-    const card = h('section.paper.stage-card', { 'aria-labelledby': 'stage-title' },
-      h('div.eyebrow', h('span', `Stage ${stage.index + 1} of ${stages.filter((x) => !x.optional).length}`), h('span', stage.short || '')),
-      h('h2#stage-title', stage.title),
-      h('p.desc', stage.description || ''),
-      mini ? h('div.mini-staff', mini) : null,
-      h('div.prog', h('div.bar', { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(progress * 100)), 'aria-label': 'Stage progress' }, h('i', { style: { width: pct(progress) } })), h('span.num', pct(progress))),
-      h('div.home-actions',
-        h('button.btn.btn-primary.btn-block', { type: 'button', onclick: () => start('practice') }, `Start ${sessionMin}-minute session`),
-        h('div.row',
-          h('button.btn', { type: 'button', disabled: !canTest, title: canTest ? '' : 'One test-out attempt per stage per day', onclick: () => confirmTestOut(stage, () => start('testout', stage.id)) }, 'Test out'),
-          h('button.btn', { type: 'button', disabled: !(state.totalAnswers > 0), onclick: () => start('review') }, 'Quick review'))));
-    parts.push(card);
+    parts.push(h('section.home-more', { 'aria-label': 'More practice' },
+      h('p.home-more-title', 'Practice on your own'),
+      h('div.home-more-row',
+        h('button.btn', { type: 'button', onclick: () => start('practice') }, 'Free practice'),
+        h('button.btn', { type: 'button', disabled: !(state.totalAnswers > 0), onclick: () => start('review') }, 'Quick review'),
+        h('button.btn', { type: 'button', disabled: !canTest, title: canTest ? '' : 'One test-out attempt per stage per day', onclick: () => confirmTestOut(stage, () => start('testout', stage.id)) }, 'Test out'))));
   }
-
-  if (prog && !firstLaunch) {
-    const last = prog.sessions && prog.sessions[prog.sessions.length - 1];
-    parts.push(h('div.stats-row',
-      h('div.stat', h('b.num', String(prog.totalAnswers || 0)), h('span', 'notes read')),
-      h('div.stat', h('b.num', last && last.medianRtMs ? (last.medianRtMs / 1000).toFixed(1) + ' s' : '–'), h('span', 'last median time')),
-      h('div.stat', h('b.num', String(streak)), h('span', streak === 1 ? 'day streak' : 'days streak'))));
-  }
-
   mount.append(h('div.home', parts));
+}
+
+function estMinutes(lesson) { return Math.max(5, Math.min(15, Math.round((lesson.steps || []).length * 0.8))); }
+
+function teachStaff(lesson) {
+  const refs = (lesson.teaches || []).filter((r) => Number.isFinite(r.midi));
+  if (!refs.length) return null;
+  const staves = new Set(refs.map((r) => r.staff));
+  const clef = staves.size > 1 ? 'grand' : [...staves][0];
+  return renderStaff({ kind: 'phrase', clef, notes: refs.map((r) => ({ midi: r.midi, staff: r.staff, accidental: r.accidental, dur: 'w' })), answer: { type: 'sequence', midis: [], given: 0 } },
+    { box: { w: 560, h: clef === 'grand' ? 190 : 130 }, maxSpace: 11, label: 'Notes this lesson teaches: ' + refs.map((r) => pretty(cur.noteName(r.midi, 'letters', { accidental: r.accidental }))).join(', ') });
+}
+
+function lessonCard(ctx, ls, nu, goLesson, start) {
+  const plan = /^L\d\d$/.test(nu.lessonId) ? getLesson(nu.lessonId) : null;
+  const total = LESSONS.length;
+  let eyebrow, title, desc, staff = null, btn, extra = null, check = null;
+  if (nu.kind === 'resume') {
+    const l = plan || { title: nu.lessonId.startsWith('R:') ? 'Short review' : 'Daily practice', steps: [] };
+    const n = (l.steps || []).length;
+    eyebrow = plan ? `Lesson ${plan.n} of ${total}` : 'In progress';
+    title = l.title; desc = plan ? plan.goal : 'Pick up where you left off.';
+    staff = plan ? teachStaff(plan) : null;
+    btn = h('button.btn.btn-primary.btn-block', { type: 'button', onclick: () => goLesson() }, n ? `Continue lesson (step ${Math.min(n, nu.stepIndex + 1)} of ${n})` : 'Continue lesson');
+  } else if (nu.kind === 'review') {
+    const forL = nu.entry ? getLesson(nu.entry.forLesson) : null;
+    const focus = nu.entry ? itemsText(nu.entry.focus, ctx.settings().naming) : '';
+    eyebrow = 'Short review';
+    title = nu.reason === 'away' ? 'Welcome back' : nu.reason === 'weak' ? 'Shore up a few notes' : `${forL ? 'Lesson ' + forL.n + ', ' : ''}one more pass`;
+    desc = nu.reason === 'repeat' ? `${focus ? focus.charAt(0).toUpperCase() + focus.slice(1) : 'A few notes'} ${focus.includes(' and ') ? 'need' : 'needs'} one more pass. About 8 minutes.` : nu.reason === 'away' ? 'A quick refresher on what you learned before the break.' : 'A few notes have been slipping. A focused 8 minutes fixes that.';
+    const line = nu.reason === 'repeat' ? 'one more pass' : nu.reason === 'away' ? 'welcome back' : 'shaky notes';
+    btn = h('button.btn.btn-primary.btn-block', { type: 'button', onclick: () => goLesson() }, `Start review: ${line}`);
+  } else if (nu.kind === 'core' && nu.availability === 'tomorrow') {
+    const last = Object.entries(ls.done).filter(([id]) => /^L\d\d$/.test(id)).sort((a, b) => b[1].at - a[1].at)[0];
+    const lastL = last ? getLesson(last[0]) : null;
+    eyebrow = `Lesson ${plan.n} of ${total}`;
+    check = h('p.lc-done', h('span.lc-tick', { 'aria-hidden': 'true' }, '✓'), lastL ? `Lesson ${lastL.n} done for today` : 'Today’s lesson is done');
+    title = `Tomorrow: ${plan.title}`;
+    desc = 'Let today’s notes settle overnight. A few minutes of review now makes tomorrow easier.';
+    const items = lastL && lastL.items.length ? lastL.items : (lastL ? lastL.teaches.map((t) => t.itemId).filter(Boolean) : []);
+    btn = h('button.btn.btn-primary.btn-block', { type: 'button', disabled: !items.length, onclick: () => start('lesson', undefined, { itemIds: items }) }, 'Practice today’s notes (5 min)');
+    extra = h('button.link-btn', { type: 'button', onclick: () => goLesson(true) }, `Start lesson ${plan.n} anyway`);
+  } else if (nu.kind === 'core') {
+    eyebrow = `Lesson ${plan.n} of ${total}`;
+    title = plan.title; desc = plan.goal;
+    staff = teachStaff(plan);
+    btn = h('button.btn.btn-primary.btn-block', { type: 'button', onclick: () => goLesson() }, `Start lesson ${plan.n}`);
+  } else {
+    eyebrow = 'All 32 lessons done';
+    title = 'Today’s piece'; desc = 'A warm-up and two tunes you have not played in a while. Ten minutes keeps it all fresh.';
+    btn = h('button.btn.btn-primary.btn-block', { type: 'button', onclick: () => goLesson() }, 'Today’s piece');
+  }
+  const minutes = plan && nu.kind !== 'review' && !(nu.kind === 'core' && nu.availability === 'tomorrow') ? `about ${estMinutes(plan)} min, ${plan.steps.length} steps` : nu.kind === 'review' ? 'about 8 min' : '';
+  return h('section.paper.lesson-card', { 'aria-labelledby': 'lc-title' },
+    h('div.eyebrow', h('span', eyebrow), minutes ? h('span', minutes) : null),
+    check,
+    h('h2#lc-title', title),
+    h('p.desc', desc),
+    staff ? h('div.mini-staff', staff) : null,
+    nu.softCap ? h('p.lc-soft', 'Three lessons today already. Spacing beats cramming; tomorrow will stick better.') : null,
+    h('div.home-actions', btn, extra));
+}
+
+function firstCard(ctx, engine) {
+  const staff = teachStaff(getLesson('L01'));
+  return h('section.paper.lesson-card.is-first', { 'aria-labelledby': 'lc-title' },
+    h('div.eyebrow', h('span', 'Lesson 1 of 32'), h('span', 'about 12 min')),
+    h('h2#lc-title', 'Start with middle C'),
+    h('p.desc', 'Find your way around the keyboard, read your first three notes and play a real tune today. Each lesson teaches, then lets you try, then checks.'),
+    staff ? h('div.mini-staff', staff) : null,
+    h('div.home-actions',
+      h('button.btn.btn-primary.btn-block', { type: 'button', onclick: () => { try { engine.skipPlacement && engine.skipPlacement(); } catch { /* ignore */ } ctx.save(); ctx.nav('lesson'); } }, 'Start lesson 1'),
+      h('button.btn.btn-block', { type: 'button', onclick: () => { ctx.pendingStart = { mode: 'placement' }; ctx.nav('practice'); } }, 'I can already read some music')));
 }
 
 function confirmTestOut(stage, go) {

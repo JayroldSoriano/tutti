@@ -35,12 +35,15 @@ for (const [w, hgt, scheme] of combos) {
   await page.waitForSelector('.home');
   await check('home-first');
   await shot('home-first');
-  await page.getByRole('button', { name: /starting from zero/i }).click();
-  await page.waitForSelector('.stage-card h2#stage-title');
+  // new Home: skip placement (what "Start lesson 1" does), then land on the Today card with the practice row
+  await page.evaluate(() => { window.__tutti.engine.skipPlacement(); window.__tutti.ctx.save({ flush: true }); });
+  await page.reload();
+  await page.waitForSelector('.lesson-card');
+  await page.waitForSelector('.home-more-row');
   await check('home');
   await shot('home');
 
-  await page.getByRole('button', { name: /Start .*session/i }).click();
+  await page.getByRole('button', { name: 'Free practice' }).click();
   await page.waitForSelector('.practice .p-staff svg');
   await page.waitForTimeout(300);
   const pr = await check('practice');

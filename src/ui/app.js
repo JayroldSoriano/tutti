@@ -11,8 +11,12 @@ import { renderHome } from './screens/home.js';
 import { renderPractice } from './screens/practice.js';
 import { renderProgress } from './screens/progress.js';
 import { renderSettings } from './screens/settings.js';
+import { renderLesson } from './screens/lesson.js';
+import { renderLessons } from './screens/lessons.js';
+import { renderSong } from './screens/song.js';
 
-const ROUTES = ['home', 'practice', 'progress', 'settings'];
+const ROUTES = ['home', 'practice', 'progress', 'settings', 'lesson', 'lessons', 'song'];
+const FULLSCREEN = ['practice', 'lesson', 'song'];
 
 function boot() {
   const root = document.getElementById('app');
@@ -67,7 +71,12 @@ function boot() {
     save(opts = {}) { try { store.save(engine.getState(), opts); } catch { /* ignore */ } },
     backend: () => backendName,
     syncStatus: () => syncStatus,
-    nav(route) { const r = ROUTES.includes(route) ? route : 'home'; if (location.hash !== '#' + r) location.hash = r; else render(); },
+    nav(route) {
+      const r = ROUTES.includes(String(route).split('/')[0]) ? route : 'home';
+      const want = '#' + r + (debug ? '&debug' : '');
+      if (location.hash !== want && location.hash !== '#' + r) location.hash = want; else render();
+    },
+    pendingLesson: null,
     rebuildEngine(state) { engine = makeEngine(state); settingsCache = null; applySettings(); },
     sessionEnded() {
       ctx.sessionRunning = false;
@@ -147,7 +156,8 @@ function boot() {
 
   // ---- shell
   const tabsDef = [
-    ['home', 'Practice', iconPipes()],
+    ['home', 'Today', iconPipes()],
+    ['lessons', 'Lessons', iconBook()],
     ['progress', 'Progress', iconPath()],
     ['settings', 'Settings', iconStops()],
   ];
@@ -165,23 +175,20 @@ function boot() {
     if (typeof cleanup === 'function') { try { cleanup(); } catch (e) { console.warn(e); } }
     cleanup = null;
     clear(main);
-    root.classList.toggle('is-practice', route === 'practice');
+    root.classList.toggle('is-practice', FULLSCREEN.includes(route));
     for (const a of tabLinks) {
       const r = a.dataset.route;
-      const cur = r === route || (r === 'home' && route === 'practice');
+      const cur = r === route || (r === 'home' && (route === 'practice' || route === 'lesson')) || (r === 'lessons' && route === 'song');
       if (cur) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     }
-    const fn = { home: renderHome, practice: renderPractice, progress: renderProgress, settings: renderSettings }[route];
+    const fn = { home: renderHome, practice: renderPractice, progress: renderProgress, settings: renderSettings, lesson: renderLesson, lessons: renderLessons, song: renderSong }[route];
     try { cleanup = fn(ctx, main); }
     catch (e) {
       console.error(e);
       main.append(h('div.card', h('h2', 'Something went wrong drawing this screen.'), h('p.muted', String(e && e.message || e))));
     }
-    if (route !== 'practice') window.scrollTo(0, 0);
+    if (!FULLSCREEN.includes(route)) window.scrollTo(0, 0);
   }
-  window.addEventListener('hashchange', render);
-  render();
-
   if (debug) {
     window.__tutti = {
       get engine() { return engine; }, ctx, store,
@@ -189,6 +196,9 @@ function boot() {
       play(midi) { onNote({ midi, on: true, t: performance.now(), source: 'key' }); onNote({ midi, on: false, t: performance.now(), source: 'key' }); },
     };
   }
+  window.addEventListener('hashchange', render);
+  render();
+
   window.addEventListener('error', () => toast('Something went wrong. Your progress is saved on this device.'));
 }
 
@@ -198,6 +208,10 @@ function svgIcon(paths) {
   el.setAttribute('viewBox', '0 0 24 24'); el.setAttribute('aria-hidden', 'true');
   el.innerHTML = paths;
   return el;
+}
+// an open score
+function iconBook() {
+  return svgIcon('<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.5 5.5c3-1 6-1 8.5.8v13c-2.5-1.8-5.5-1.8-8.5-.8z"/><path class="pipe-fill" d="M20.5 5.5c-3-1-6-1-8.5.8v13c2.5-1.8 5.5-1.8 8.5-.8z"/></g>');
 }
 // organ pipes
 function iconPipes() {

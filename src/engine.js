@@ -2,6 +2,7 @@
 // Time arrives as `now` (ms) in every call; randomness comes from a seeded mulberry32 stream
 // whose state is persisted in State.rng. Curriculum is injectable via config.curriculum.
 import * as DEFAULT_CURRICULUM from './curriculum.js';
+import { sanitizeLessonState, mergeLessonState, freshLessonState } from './lessonProgress.js';
 
 export const STATE_VERSION = 1;
 
@@ -187,8 +188,15 @@ function migrateWith(any, cur, seed = 0) {
     if (isObj(any.days)) {
       for (const k of Object.keys(any.days)) {
         const d = any.days[k];
-        if (/^\d{4}-\d{2}-\d{2}$/.test(k) && isObj(d)) s.days[k] = { ms: num(d.ms, 0), answers: num(d.answers, 0), correct: num(d.correct, 0) };
+        if (/^\d{4}-\d{2}-\d{2}$/.test(k) && isObj(d)) {
+          s.days[k] = { ms: num(d.ms, 0), answers: num(d.answers, 0), correct: num(d.correct, 0) };
+          if (num(d.lessons, 0) > 0) s.days[k].lessons = Math.floor(d.lessons);
+        }
       }
+    }
+    if (any.lessons !== undefined) {
+      const ls = sanitizeLessonState(any.lessons);
+      if (ls) s.lessons = ls;
     }
     // consistency: exactly one stage 'active' among non-optional at stageIdx unless all passed
     const ne = nonOptional(cur);
@@ -212,8 +220,17 @@ export function mergeStates(a, b) {
   if (!isObj(a)) return clone(b);
   if (!isObj(b)) return clone(a);
   const ta = num(a.totalAnswers, 0), tb = num(b.totalAnswers, 0);
-  if (ta !== tb) return clone(ta > tb ? a : b);
-  return clone(num(b.updatedAt, 0) > num(a.updatedAt, 0) ? b : a);
+  const win = ta !== tb ? clone(ta > tb ? a : b) : clone(num(b.updatedAt, 0) > num(a.updatedAt, 0) ? b : a);
+  if (a.lessons !== undefined || b.lessons !== undefined) win.lessons = mergeLessonState(a.lessons, b.lessons);
+  const da = isObj(a.days) ? a.days : {}, db = isObj(b.days) ? b.days : {};
+  for (const k of new Set([...Object.keys(da), ...Object.keys(db)])) {
+    const m = Math.max(num(isObj(da[k]) ? da[k].lessons : 0, 0), num(isObj(db[k]) ? db[k].lessons : 0, 0));
+    if (m <= 0) continue;
+    if (!isObj(win.days)) win.days = {};
+    if (!isObj(win.days[k])) win.days[k] = { ms: 0, answers: 0, correct: 0 };
+    win.days[k].lessons = m;
+  }
+  return win;
 }
 
 // ---------------------------------------------------------------- collector
@@ -370,10 +387,11 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
   }
   function streakDays(now) {
     const goal = state.settings.dailyGoalMin * MIN;
+    const counts = (d) => !!d && (d.ms >= goal || (d.lessons || 0) >= 1);
     let k = dayKey(now, state.tz);
-    if (!(state.days[k] && state.days[k].ms >= goal)) k = prevDay(k);
+    if (!counts(state.days[k])) k = prevDay(k);
     let n = 0;
-    while (state.days[k] && state.days[k].ms >= goal) { n++; k = prevDay(k); }
+    while (counts(state.days[k])) { n++; k = prevDay(k); }
     return n;
   }
 
@@ -473,7 +491,7 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
   }
 
   // ---- session start
-  function startSession({ mode = 'practice', stageId, lengthMs, now = lastNow, inputMode, tzOffsetMin } = {}) {
+  function startSession({ mode = 'practice', stageId, lengthMs, now = lastNow, inputMode, tzOffsetMin, itemIds, count, min, hints, stopEarly, retries } = {}) {
     lastNow = now;
     if (sess && !sess.ended) endSession({ now });
     if (Number.isFinite(tzOffsetMin)) state.tz = tzOffsetMin;
@@ -487,6 +505,7 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
       lastItem: null, lastT: now, queue: [], pendingIntros: 0, sb: null, sbCount: {}, mastered: [], introduced: [],
       stageBefore: null, ended: false, over: false, missCount: {}, ok: true, reasonFail: undefined,
       stageRec: null, lastPromptId: null, pace0: state.pace, touched: new Set(),
+      perItem: {}, missedSet: new Set(), ratios: [], lesson: null,
     };
     // forgetting: overdue by > 2x interval loses a box and becomes due
     for (const id of Object.keys(state.items)) {
@@ -522,6 +541,19 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
         s.tlist = list; s.tres = [];
         s.stageRec = state.stages[stage.id];
       }
+    } else if (mode === 'lesson') {
+      const pool = (Array.isArray(itemIds) ? itemIds : []).filter((id, i, a) => typeof id === 'string' && cur.ITEMS[id] && a.indexOf(id) === i);
+      const cnt = Number.isFinite(count) && count > 0 ? Math.floor(count) : 10;
+      const cover = pool.slice();
+      for (let i = cover.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [cover[i], cover[j]] = [cover[j], cover[i]]; }
+      s.lesson = {
+        pool, cover, count: cnt, min: Number.isFinite(min) && min > 0 ? Math.floor(min) : 8,
+        hints: hints === 'on' || hints === 'auto' ? hints : 'off', stopEarly: !!stopEarly, retries: retries !== false, hist: [],
+      };
+      if (!pool.length) { s.ok = false; s.reasonFail = 'empty'; }
+      s.stageId = curStage().id;
+      s.stageBefore = curStage().id;
+      s.stageRec = state.stages[curStage().id];
     } else {
       if (!canPractice(stage)) stage = curStage();
       s.stageId = stage.id;
@@ -558,6 +590,7 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
     if (timed && now - s.startedAt >= s.lengthMs) { s.over = true; return null; }
 
     if (s.mode === 'placement') return nextPlacement(now);
+    if (s.mode === 'lesson') return nextLesson(now);
     if (s.mode === 'testout') {
       if (s.tres.length >= s.tlist.length) { s.over = true; return null; }
       return buildPrompt(s.tlist[s.tres.length], { reason: 'probe', now, hintOverride: Infinity });
@@ -650,6 +683,36 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
   }
   function finish(p) { sess.lastItem = p.itemId; return p; }
 
+  function nextLesson(now) {
+    const s = sess, L = s.lesson;
+    if (s.answers >= L.count) { s.over = true; return null; }
+    const single = L.pool.length === 1;
+    let id = null, reason = 'flow';
+    // 1. coverage pass (rng-shuffled at session start)
+    if (L.cover.length) {
+      let i = L.cover.findIndex((x) => x !== s.lastItem);
+      if (i < 0) i = 0;
+      id = L.cover.splice(i, 1)[0];
+      reason = 'new';
+    }
+    // 2. expanding-retrieval retries
+    if (id == null && L.retries) {
+      const dueQ = s.queue.filter((q) => q.at <= s.answers && (single || q.itemId !== s.lastItem)).sort((a, b) => a.at - b.at)[0];
+      if (dueQ) { s.queue.splice(s.queue.indexOf(dueQ), 1); id = dueQ.itemId; reason = 'retry'; }
+    }
+    // 3. weighted draw over the pool
+    if (id == null) {
+      id = draw(L.pool, now, s.lastItem);
+      const r = rec(id);
+      reason = r && r.n > 0 && r.box >= 1 && r.due <= now ? 'due' : itemMastery(id) < 0.6 ? 'weak' : 'flow';
+    }
+    if (id == null) { s.over = true; return null; }
+    const r = ensure(id);
+    if (!r.intro) r.intro = state.totalAnswers + 1; // stamped on first presentation; never an intro card
+    const hintOverride = L.hints === 'off' ? Infinity : L.hints === 'on' ? 0 : undefined;
+    return finish(buildPrompt(id, { reason, now, hintOverride }));
+  }
+
   function nextPlacement(now) {
     const s = sess, ps = s.ps;
     if (ps.total >= config.placement.cap || ps.stageI > ps.maxI) { s.over = true; return null; }
@@ -702,6 +765,11 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
     s.answers++;
     if (correct) { s.correct++; s.streak++; s.bestStreak = Math.max(s.bestStreak, s.streak); } else s.streak = 0;
     if (correct && !hintShown) s.rts.push(rt);
+    {
+      const pi = s.perItem[meta.itemId] || (s.perItem[meta.itemId] = { n: 0, c: 0 });
+      pi.n++; if (correct) pi.c++; else s.missedSet.add(meta.itemId);
+      if (correct && !hintShown) s.ratios.push(rt / Math.max(1, meta.goalMs));
+    }
 
     if (s.mode === 'placement') return answerPlacement(meta, correct, rt, now, fb, events);
     if (s.mode === 'testout') return answerTestout(meta, correct, rt, now, fb, events);
@@ -730,7 +798,7 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
     const nowMastered = isMastered(meta.itemId, scaleOf(meta.itemId));
     if (!wasMastered && nowMastered) { events.push({ type: 'item-mastered', itemId: meta.itemId }); s.mastered.push(meta.itemId); }
     // re-queue misses
-    if (!correct) {
+    if (!correct && !(s.mode === 'lesson' && !s.lesson.retries)) {
       s.queue = s.queue.filter((q) => q.itemId !== meta.itemId);
       for (const d of config.requeue) s.queue.push({ itemId: meta.itemId, at: s.answers + d });
     }
@@ -788,6 +856,12 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
           s.queue = [];
         }
       }
+    }
+    if (s.mode === 'lesson') {
+      const L = s.lesson;
+      L.hist.push(correct ? 1 : 0);
+      const last8 = L.hist.slice(-8);
+      if (s.answers >= L.count || (L.stopEarly && s.answers >= L.min && last8.length >= 8 && last8.reduce((a, b) => a + b, 0) >= 7)) s.over = true;
     }
     fb.events = events;
     fb.sessionOver = isOver(now);
@@ -901,6 +975,7 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
       bestStreak: s.bestStreak, itemsMastered: [...new Set(s.mastered)], itemsIntroduced: [...s.introduced], weakest,
       stageBefore: s.stageBefore, stageAfter: stAfter.id, stageProgress: stageProgress(stAfter.id),
       dailyGoalMet: !!(day && day.ms >= goalMs), streakDays: streakDays(now),
+      perItem: clone(s.perItem), missed: [...s.missedSet], medianRatio: s.ratios.length ? r3(median(s.ratios)) : 0,
     };
     state.updatedAt = now; state.rng = rng.state();
     return lastSummary;
@@ -909,7 +984,7 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
     const st = curStage();
     return { mode: 'practice', startedAt: now, durMs: 0, answers: 0, correct: 0, accuracy: 0, medianRtMs: 0, bestStreak: 0,
       itemsMastered: [], itemsIntroduced: [], weakest: [], stageBefore: st.id, stageAfter: st.id, stageProgress: stageProgress(st.id),
-      dailyGoalMet: false, streakDays: streakDays(now) };
+      dailyGoalMet: false, streakDays: streakDays(now), perItem: {}, missed: [], medianRatio: 0 };
   }
 
   // ---- progress
@@ -938,7 +1013,7 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
         canTestOut: canTestOutAt(st.id, now),
       })),
       items, heat, sessions: state.sessions.slice(-60).map((x) => ({ ...x })),
-      today: { ms: day ? Math.round(day.ms) : 0, answers: day ? day.answers : 0, goalMs: state.settings.dailyGoalMin * MIN },
+      today: { ms: day ? Math.round(day.ms) : 0, answers: day ? day.answers : 0, goalMs: state.settings.dailyGoalMin * MIN, lessons: day ? day.lessons || 0 : 0 },
       streakDays: streakDays(now), totalAnswers: state.totalAnswers, pace: state.pace,
     };
   }
@@ -961,9 +1036,56 @@ export function createEngine({ state: saved, seed = 1, config: cfgOver } = {}) {
   }
   function skipPlacement() { state.placementDone = true; }
 
+  // ---- lessons (v2)
+  function getLessons() { return state.lessons ? clone(state.lessons) : freshLessonState(); }
+  function setLessons(ls, { now = lastNow } = {}) {
+    const s = sanitizeLessonState(ls);
+    if (!s) return;
+    lastNow = now;
+    s.updatedAt = now;
+    state.lessons = s;
+    state.updatedAt = now;
+  }
+  function itemStats({ now = lastNow } = {}) {
+    void now;
+    const out = {};
+    for (const id of Object.keys(state.items)) {
+      const r = state.items[id];
+      if (!cur.ITEMS[id] || !r || !(r.n > 0)) continue;
+      out[id] = { mastery: r4(itemMastery(id, scaleOf(id))), acc: r.acc, n: r.n, box: r.box, due: r.due, mastered: isMastered(id, scaleOf(id)) };
+    }
+    return out;
+  }
+  function passStages(stageIds, { now = lastNow } = {}) {
+    lastNow = now;
+    const want = new Set(Array.isArray(stageIds) ? stageIds : []);
+    const events = [];
+    let prefix = true; // every earlier non-optional stage is passed
+    for (const stage of NONOPT) {
+      const st = state.stages[stage.id];
+      if (st.status === 'passed') continue;
+      if (prefix && want.has(stage.id)) passStage(stage, 'lesson', now, events);
+      else prefix = false;
+    }
+    if (events.length) state.updatedAt = now;
+    return events;
+  }
+  function addActiveMs(ms, { now = lastNow } = {}) {
+    lastNow = now;
+    dayRec(now).ms += clamp(num(ms, 0), 0, 180000);
+    state.updatedAt = now;
+  }
+  function markLessonDay({ now = lastNow } = {}) {
+    lastNow = now;
+    const d = dayRec(now);
+    d.lessons = (d.lessons || 0) + 1;
+    state.updatedAt = now;
+  }
+
   return {
     getState() { state.rng = rng.state(); return clone(state); },
     startSession, next, answer, skip, endSession, progress, setSettings, reset, skipPlacement,
+    getLessons, setLessons, itemStats, passStages, addActiveMs, markLessonDay,
     collector(prompt) {
       return makeCollector(prompt, { inputMode: (sess && sess.inputMode) || state.settings.inputMode, octaveStrict: state.settings.octaveStrict, config });
     },

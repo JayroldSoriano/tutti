@@ -24,13 +24,13 @@ async function newPage({ width = 390, height = 844, init, ctxOpts } = {}) {
   return { ctx, page };
 }
 const skipPlacement = async (page) => {
+  // v2 home: no placement card; mark placement skipped and land on the lesson card
   await page.waitForSelector('.home');
-  const b = page.getByRole('button', { name: /starting from zero/i });
-  if (await b.count()) await b.click();
-  await page.waitForSelector('.stage-card h2#stage-title');
+  await page.evaluate(() => { const e = window.__tutti.engine; e.skipPlacement && e.skipPlacement(); window.__tutti.ctx.save({ flush: true }); window.__tutti.ctx.render(); });
+  await page.waitForSelector('.lesson-card');
 };
 const startSession = async (page) => {
-  await page.getByRole('button', { name: /Start .*session/i }).click();
+  await page.getByRole('button', { name: 'Free practice' }).click();
   await page.waitForSelector('.practice .p-staff svg');
 };
 const reqOf = (p) => (p.answer.type === 'sequence' ? p.answer.midis.slice(p.answer.given || 0) : p.answer.midis || []);
@@ -115,7 +115,7 @@ const endSession = async (page) => {
   await b.page.goto(url); await b.page.waitForSelector('.home'); await b.page.waitForTimeout(1500);
   const s2 = await state(b.page);
   ok('db: progress restored on reload', s2.totalAnswers === total && total > 0, `restored=${s2.totalAnswers}`);
-  ok('db: restored placementDone -> no first-run card', await b.page.$('.stage-card') !== null);
+  ok('db: restored placementDone -> no first-run card', await b.page.$('.lesson-card:not(.is-first)') !== null);
   ok('db: no errors (reader)', b.page.errors.length === 0, b.page.errors.join(' | '));
   await b.ctx.close();
 }
@@ -157,8 +157,8 @@ for (const [label, init, expectBackend, persists] of [
   const passed = Object.entries(after.stages).filter(([, v]) => v.status === 'passed').map(([k, v]) => `${k}:${v.via}`);
   ok('fast session: a stage passed (via shown)', passed.length > 0, passed.join(','));
   await page.getByRole('button', { name: 'Done' }).click(); await page.waitForSelector('.home');
-  const stageTitle = await page.locator('#stage-title').innerText();
-  console.log('      home stage card title:', stageTitle);
+  const stageTitle = await page.locator('#lc-title').innerText();
+  console.log('      home lesson card title:', stageTitle);
   await page.click('a.tab[data-route="progress"]'); await page.waitForSelector('.progress');
   ok('fast session: progress screen renders', true);
   ok('fast session: no errors', page.errors.length === 0, page.errors.join(' | '));
